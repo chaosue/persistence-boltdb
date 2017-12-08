@@ -9,13 +9,14 @@ import (
 )
 
 var (
-	bucketRetained      = []byte("retained")
-	bucketSessions      = []byte("sessions")
-	bucketSubscriptions = []byte("subscriptions")
-	bucketExpire        = []byte("expire")
-	bucketPackets       = []byte("packets")
-	bucketState         = []byte("state")
-	bucketSystem        = []byte("system")
+	bucketRetained      						  = []byte("retained")
+	bucketSessions     							  = []byte("sessions")
+	bucketSubscriptions 						  = []byte("subscriptions")
+	bucketExpire        						  = []byte("expire")
+	bucketPackets       						  = []byte("packets")
+	bucketState         						  = []byte("state")
+	bucketSystem        						  = []byte("system")
+	bucketLastCompletedSubscribedMessageUniqueIds = []byte("lcsmuids")
 )
 
 // Config configuration of the BoltDB backend

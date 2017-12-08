@@ -3,9 +3,9 @@ package boltdb
 import (
 	"errors"
 	"sync"
-
 	"github.com/VolantMQ/persistence"
 	"github.com/boltdb/bolt"
+	"encoding/binary"
 )
 
 type sessions struct {
@@ -57,13 +57,11 @@ func (s *sessions) SubscriptionsDelete(id []byte) error {
 			return persistence.ErrNotInitialized
 		}
 
-		session := tx.Bucket(id)
+		session := sessions.Bucket(id)
 		if session == nil {
 			return persistence.ErrNotFound
 		}
-
-		session.Delete(id) // nolint: errcheck
-		return nil
+		return sessions.DeleteBucket(id)
 	})
 }
 
@@ -204,39 +202,15 @@ func (s *sessions) PacketsDelete(id []byte) error {
 }
 
 func (s *sessions) LoadForEach(load func([]byte, *persistence.SessionState) error) error {
-	return s.db.db.Update(func(tx *bolt.Tx) error {
+	return s.db.db.View(func(tx *bolt.Tx) error {
 		sessions := tx.Bucket(bucketSessions)
 		if sessions == nil {
 			return nil
 		}
 
-		return sessions.ForEach(func(k, v []byte) error {
+		return sessions.ForEach(func(k, _ []byte) error {
 			session := sessions.Bucket(k)
-			st := &persistence.SessionState{}
-
-			state := session.Bucket(bucketState)
-			if st == nil {
-				st.Errors = append(st.Errors, errors.New("session does not have state"))
-			} else {
-				if v := state.Get([]byte("version")); len(v) > 0 {
-					st.Version = v[0]
-				} else {
-					st.Errors = append(st.Errors, errors.New("protocol version not found"))
-				}
-
-				st.Timestamp = string(state.Get([]byte("timestamp")))
-				st.Subscriptions = state.Get(bucketSubscriptions)
-
-				if expire := state.Bucket(bucketExpire); expire != nil {
-					st.Expire = &persistence.SessionDelays{
-						Since:    string(expire.Get([]byte("since"))),
-						ExpireIn: string(expire.Get([]byte("expireIn"))),
-						WillIn:   string(expire.Get([]byte("willIn"))),
-						WillData: expire.Get([]byte("willData")),
-					}
-				}
-			}
-			return load(k, st)
+			return load(k, ParseState(session))
 		})
 	})
 }
@@ -269,6 +243,9 @@ func (s *sessions) StateStore(id []byte, state *persistence.SessionState) error 
 			return err
 		}
 
+		if err = st.Put([]byte("version"), []byte{state.Version}); err != nil {
+			return err
+		}
 		if state.Expire != nil {
 			expire, err := st.CreateBucketIfNotExists(bucketExpire)
 			if err != nil {
@@ -297,6 +274,21 @@ func (s *sessions) StateStore(id []byte, state *persistence.SessionState) error 
 			}
 		}
 
+		if state.LastCompletedSubscribedMessageUniqueIds != nil {
+			// clear old records.
+			st.DeleteBucket(bucketLastCompletedSubscribedMessageUniqueIds)
+			ids, err  := st.CreateBucket(bucketLastCompletedSubscribedMessageUniqueIds)
+			if err != nil {
+				return err
+			}
+			for topic, id := range *state.LastCompletedSubscribedMessageUniqueIds {
+				v := make([]byte, 8)
+				binary.BigEndian.PutUint64(v, uint64(id))
+				if err = ids.Put([]byte(topic), v); err != nil {
+					return err
+				}
+			}
+		}
 		return nil
 	})
 }
@@ -319,6 +311,25 @@ func (s *sessions) StateDelete(id []byte) error {
 	})
 }
 
+// StateGet get a session's state.
+// id it the session id.
+func (s *sessions) StateGet(id []byte)(st *persistence.SessionState, err error){
+	err = s.db.db.View(func(tx *bolt.Tx) error {
+		sessions := tx.Bucket(bucketSessions)
+		if sessions == nil {
+			return persistence.ErrNotInitialized
+		}
+
+		s := sessions.Bucket(id)
+		if s == nil {
+			return nil
+		}
+		st = ParseState(s)
+		return nil
+	})
+	return
+}
+
 func (s *sessions) Delete(id []byte) error {
 	return s.db.db.Update(func(tx *bolt.Tx) error {
 		if buck := tx.Bucket(bucketSessions); buck != nil {
@@ -331,4 +342,40 @@ func (s *sessions) Delete(id []byte) error {
 
 		return nil
 	})
+}
+
+func ParseState(sessionBucket *bolt.Bucket)(st *persistence.SessionState){
+	st = &persistence.SessionState{}
+	state := sessionBucket.Bucket(bucketState)
+	if state == nil {
+		st.Errors = append(st.Errors, errors.New("session does not have state"))
+	}else {
+		if v := state.Get([]byte("version")); len(v) > 0 {
+			st.Version = v[0]
+		} else {
+			st.Errors = append(st.Errors, errors.New("protocol version not found"))
+		}
+
+		st.Timestamp = string(state.Get([]byte("timestamp")))
+		st.Subscriptions = state.Get(bucketSubscriptions)
+
+		if expire := state.Bucket(bucketExpire); expire != nil {
+			st.Expire = &persistence.SessionDelays{
+				Since:    string(expire.Get([]byte("since"))),
+				ExpireIn: string(expire.Get([]byte("expireIn"))),
+				WillIn:   string(expire.Get([]byte("willIn"))),
+				WillData: expire.Get([]byte("willData")),
+			}
+		}
+
+		st.LastCompletedSubscribedMessageUniqueIds = &map[string]int64{}
+		if topics := state.Bucket(bucketLastCompletedSubscribedMessageUniqueIds); topics != nil {
+			topics.ForEach(
+				func(t, id []byte)error{
+					(*st.LastCompletedSubscribedMessageUniqueIds)[string(t)] = int64(binary.BigEndian.Uint64(id))
+					return nil
+				})
+		}
+	}
+	return
 }
