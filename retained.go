@@ -3,7 +3,6 @@ package boltdb
 import (
 	"sync"
 	"github.com/VolantMQ/persistence"
-	"github.com/VolantMQ/volantmq/packet"
 	"github.com/boltdb/bolt"
 )
 
@@ -28,7 +27,7 @@ func (r *retained) Load() ([]persistence.PersistedPacket, error) {
 				pkt.Data = buck.Get([]byte("data"))
 				pkt.ExpireAt = string(buck.Get([]byte("expireAt")))
 				if pktVersion := buck.Get([]byte("version")); pktVersion != nil {
-					pkt.Version = packet.ProtocolVersion(pktVersion[0])
+					pkt.Version = persistence.ProtocolVersion(pktVersion[0])
 				}
 				res = append(res, pkt)
 			}
