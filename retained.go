@@ -4,6 +4,7 @@ import (
 	"sync"
 	"github.com/VolantMQ/persistence"
 	"github.com/boltdb/bolt"
+	"encoding/binary"
 )
 
 type retained struct {
@@ -20,14 +21,16 @@ func (r *retained) Load() ([]persistence.PersistedPacket, error) {
 	err := r.db.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(bucketRetained)
 
-		return bucket.ForEach(func(k, v []byte) error {
+		return bucket.ForEach(func(k, _ []byte) error {
 			pkt := persistence.PersistedPacket{}
-
 			if buck := bucket.Bucket(k); buck != nil {
 				pkt.Data = buck.Get([]byte("data"))
 				pkt.ExpireAt = string(buck.Get([]byte("expireAt")))
 				if pktVersion := buck.Get([]byte("version")); pktVersion != nil {
 					pkt.Version = persistence.ProtocolVersion(pktVersion[0])
+				}
+				if createdAt := buck.Get([]byte("createdAt")); createdAt != nil {
+					pkt.CreatedAt = int64(binary.BigEndian.Uint64(createdAt))
 				}
 				res = append(res, pkt)
 			}
@@ -66,6 +69,10 @@ func (r *retained) Store(packets []persistence.PersistedPacket) error {
 			}
 
 			err = pack.Put([]byte("version"), []byte{byte(p.Version)})
+			if err != nil {
+				return err
+			}
+			err = pack.Put([]byte("createdAt"), itob64(uint64(p.CreatedAt)))
 			if err != nil {
 				return err
 			}

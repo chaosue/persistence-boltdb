@@ -233,12 +233,6 @@ func (s *sessions) StateStore(id []byte, state *persistence.SessionState) error 
 			return err
 		}
 
-		if len(state.Subscriptions) > 0 {
-			if err = st.Put(bucketSubscriptions, state.Subscriptions); err != nil {
-				return err
-			}
-		}
-
 		if err = st.Put([]byte("timestamp"), []byte(state.Timestamp)); err != nil {
 			return err
 		}
@@ -357,7 +351,7 @@ func ParseState(sessionBucket *bolt.Bucket)(st *persistence.SessionState){
 		}
 
 		st.Timestamp = string(state.Get([]byte("timestamp")))
-		st.Subscriptions = state.Get(bucketSubscriptions)
+		st.Subscriptions = sessionBucket.Get(bucketSubscriptions)
 
 		if expire := state.Bucket(bucketExpire); expire != nil {
 			st.Expire = &persistence.SessionDelays{
