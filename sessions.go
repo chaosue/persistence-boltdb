@@ -5,7 +5,6 @@ import (
 	"sync"
 	"github.com/VolantMQ/persistence"
 	"github.com/boltdb/bolt"
-	"encoding/binary"
 )
 
 type sessions struct {
@@ -216,6 +215,10 @@ func (s *sessions) LoadForEach(load func([]byte, *persistence.SessionState) erro
 }
 
 func (s *sessions) StateStore(id []byte, state *persistence.SessionState) error {
+	err := s.SubscriptionsStore(id, state.Subscriptions)
+	if err != nil {
+		return err
+	}
 	return s.db.db.Update(func(tx *bolt.Tx) error {
 		sessions := tx.Bucket(bucketSessions)
 		if sessions == nil {
@@ -263,22 +266,6 @@ func (s *sessions) StateStore(id []byte, state *persistence.SessionState) error 
 			}
 			if len(state.Expire.WillData) > 0 {
 				if err = expire.Put([]byte("willData"), state.Expire.WillData); err != nil {
-					return err
-				}
-			}
-		}
-
-		if state.LastCompletedSubscribedMessageUniqueIds != nil {
-			// clear old records.
-			st.DeleteBucket(bucketLastCompletedSubscribedMessageUniqueIds)
-			ids, err  := st.CreateBucket(bucketLastCompletedSubscribedMessageUniqueIds)
-			if err != nil {
-				return err
-			}
-			for topic, id := range *state.LastCompletedSubscribedMessageUniqueIds {
-				v := make([]byte, 8)
-				binary.BigEndian.PutUint64(v, uint64(id))
-				if err = ids.Put([]byte(topic), v); err != nil {
 					return err
 				}
 			}
@@ -360,15 +347,6 @@ func ParseState(sessionBucket *bolt.Bucket)(st *persistence.SessionState){
 				WillIn:   string(expire.Get([]byte("willIn"))),
 				WillData: expire.Get([]byte("willData")),
 			}
-		}
-
-		st.LastCompletedSubscribedMessageUniqueIds = &map[string]int64{}
-		if topics := state.Bucket(bucketLastCompletedSubscribedMessageUniqueIds); topics != nil {
-			topics.ForEach(
-				func(t, id []byte)error{
-					(*st.LastCompletedSubscribedMessageUniqueIds)[string(t)] = int64(binary.BigEndian.Uint64(id))
-					return nil
-				})
 		}
 	}
 	return
